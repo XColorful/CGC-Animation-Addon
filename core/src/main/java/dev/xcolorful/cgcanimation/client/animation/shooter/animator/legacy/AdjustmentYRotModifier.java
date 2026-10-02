@@ -4,6 +4,7 @@ import dev.kosmx.playerAnim.api.layered.modifier.AdjustmentModifier;
 import dev.kosmx.playerAnim.core.util.Vec3f;
 import dev.xcolorful.customgun.client.api.resource.ClientResourceApi;
 import dev.xcolorful.customgun.client.resource.instance.assets.GunDisplayInstance;
+import dev.xcolorful.customgun.client.util.ClientRenderUtils;
 import net.minecraft.client.Minecraft;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Pose;
@@ -33,7 +34,7 @@ public class AdjustmentYRotModifier implements Function<String, Optional<Adjustm
             return Optional.empty();
         }
 
-        float partialTick = mc.getPartialTick();
+        float partialTick = ClientRenderUtils.getRenderFrameTime();
         float yBodyRot = Mth.rotLerp(partialTick, player.yBodyRotO, player.yBodyRot);
         float yHeadRot = Mth.rotLerp(partialTick, player.yHeadRotO, player.yHeadRot);
         float xRot = Mth.lerp(partialTick, player.xRotO, player.getXRot());
