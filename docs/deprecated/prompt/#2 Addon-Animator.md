@@ -499,3 +499,260 @@ That "低帧数" detail is the strongest clue yet — it matches CGC's own `Defa
 4. 日志搜 `Failed to player animation file` 与 playeranimator 报错（`prepare` 解析失败会让 manager 为空 → `hasPlayerAnimator3rd` 恒 false）。
 
 如果是第 1 条，那这不是代码 bug，而是测试状态问题；如果是第 2/3 条，我就去查 1.21.1 的资源装配（`player_animator` 目录是否被 CGC 的枪包加载链路扫到）。改动未提交。
+
+# 
+
+```
+disable后正常播放CGC内置动画
+enable后移动时上下身都抽搐，瞄准时上半身帧数低，下半身抽搐
+日志放在D:\Temp-File\debug.log
+```
+
+# 
+
+Log is exactly what I need. Let me search it.
+
+The log shows mass `GunDisplayInstance ... validation failed` warnings. Let me check what that means in CGC.
+
+This is pointing at "our layers may never get data". Let me verify CGC 1.21.1 actually calls the compat hooks.
+
+The log confirms the mixin applied and CGC wires the hooks. I need to know whether our layers actually get data and whether they're re-created per frame. Let me add temporary instrumentation.
+
+**Found something concrete in the log.** CGC *drops* invalid instances (`_DataInstanceManager:79`), and the log shows mass failures:
+
+75 gun displays are dropped as invalid on 1.21.1. Let me add targeted diagnostics so one run answers the remaining questions.
+
+编译通过。日志给了几条实打实的线索，同时我加了两个诊断日志，跑一次就能定性。
+
+## 日志里的发现
+
+**1. 混入确实生效了，但有一条兼容级别警告**
+```
+Mixing playeranimator.PlayerAnimatorCompatMixin ... into ...PlayerAnimatorCompat
+Class version 65 required is higher than the class version supported by the current version of Mixin (JAVA_17 supports class version 61)
+```
+四个注入点随后都列出来了（`cgc$init` / `cgc$registerReloadListener` / `cgc$stopAllAnimation` / `cgc$playAnimation`，最后一个用到了返回值），所以**注入是成功的**。但我们的混入类是 Java 21（class 65），而 `cgcanimationclient.mixins.json` 里写的是 `"compatibilityLevel": "JAVA_17"`。当前 Mixin 版本只认到 61，所以**不能改成 JAVA_21**（会直接报错）——这条先记着，属于配置与编译目标不一致，不一定是病因。
+
+**2. CGC 侧的钩子都在**
+`_AllAssetsManager.onAddClientReloadListenerEvent` 里 `PlayerAnimatorCompat.init()`（113 行）和 `registerReloadListener(event)`（116 行）都在调，内置的 `playerAnimationManager` 已注释掉（和你之前说的一致）。所以我们的 `registerData()` 和资源监听器都装上了。
+
+**3. 没有 `Failed to player animation file`** —— 我们的 `prepare` 没遇到解析异常（但这不等于扫到了文件，见下）。
+
+**4. 75 个 `GunDisplayInstance validation failed`** —— 这条值得注意：
+```java
+// _DataInstanceManager.buildPojoInstance
+I instance = instanceFactory.apply(pojo);
+if (instance != null) targetMap.put(location, instance);
+else CustomGun.LOGGER.warn("{} {} validation failed", instanceClass, location);   // 直接丢弃
+```
+失败的实例是**被丢掉**的，所以 `tacz:hk_g3_display`、`tacz:m4a1_display`、`tacz:glock_17_display`、`suffuse:svd_display` 等 75 个（还有 16 个 BlockIndex、2 个 AttachmentIndex）在 1.21.1 上**没有 display 实例**。对这些枪，`ShooterAnimationManager.setRotationAnglesHead` 会在 `if (gunDisplayInstance == null) return;` 直接返回——**既不驱动我们的层，也不调 CGC 的 animator，而且不会停掉上一次的层**，于是上一个枪留下的那些层继续叠在原版姿态上。这天然会表现为"换枪后姿态打架"。
+
+需要你确认一件事：**这 75 个失败在 1.20.1 上有吗？** 如果你手头有 1.20.1 的日志，grep 一下 `validation failed`。1.21.1 独有的话，那它本身就是一个 CGC 侧的移植缺陷。
+
+## 我加的临时诊断（跑一次就够）
+
+```
+[cgcanim-debug] player_animator loaded: N file(s), M animation(s) [...]
+[cgcanim-debug] loop replace #K layer=<层> want=<目标动画> was=<原动画>
+```
+
+怎么读：
+
+- **`loaded: 0 file(s)`** → 我们的资源管理器根本没扫到枪包的 `player_animator`（1.21.1 资源装配差异）→ `hasPlayerAnimator3rd` 恒 false → `playAnimation` 不接管 → 你看到的是 CGC 的 `DefaultShooterAnimator`，而它的瞄准姿态走 20 Hz 同步的 `cgc$getSynAimingProgress()`，正好对应"瞄准时上半身帧数低"。
+- **`loop replace #` 每秒涨约 60** → `playLoopAnimation` 的"已激活就不重建"守卫失效，循环动画每帧重建 → 对应"移动时抽搐、静止时帧数低"。
+- **两者都正常**（数据有、replace 每秒 ~0）→ 层没问题，我下一步把诊断挪到混入的 `cgc$playAnimation` 上看接管率。
+
+1.20.1 那边只加了幂等注册（已编译通过），1.21.1 这边现在是"幂等注册 + AnimationCodecs + 两个诊断日志"。都未提交。
+
+# 
+
+```
+两个版本日志都好了
+```
+
+# 
+
+Two hypotheses are now dead: data **does** load (4 files, 84 animations) and the loop guard **holds** (only one replace ever). So the layers are driven correctly — the animation output itself is coarse. Let me compare how each playeranimator version turns ticks into per-frame interpolation.
+
+Data loads and the guard holds — so the coarse output must be interpolation. `KeyframeAnimationPlayer.get3DTransform` ignores its `tickDelta` argument, so the per-frame value must come from `setupAnim`. Let me trace it.
+
+Let me look at playeranimator's own render hook — that's where the per-frame tickDelta comes from.
+
+This is the crux — `ModifierLayer.setupAnim` prefers `modifiers.get(0)`. Let me compare that method across the two playeranimator versions.
+
+Let me trace the one remaining unknown: the per-frame `tickDelta` our layers actually receive.
+
+1.21.1 compiles. Let me put the identical probe on 1.20.1 so the two logs are directly comparable.
+
+两个日志都读到了，直接否掉了前两个假说，同时把病因定位到了一个具体的字段。
+
+## 日志给的事实
+
+**1. 数据没问题**
+```
+[cgcanim-debug] player_animator loaded: 4 file(s), 84 animation(s)
+  [tacz:rifle_default.player_animation, rainforest:rifle_default.player_animation,
+   tacz:pistol_default.player_animation, tacz:minigun.player_animation]
+```
+资源管理器正常扫到并解析成功，`hasPlayerAnimator3rd` 对默认包的枪是 true。
+
+**2. 守卫成立，循环动画没有每帧重建**
+```
+[cgcanim-debug] loop replace #1 layer=tacz:lower_animation want=hold_lower was=<inactive>
+```
+计数只在 #1 打（每 120 次才打一条），**整个会话只出现这一次** → `playLoopAnimation` 的「已激活就不重建」守卫一直生效。所以我前两轮的假说（数据没加载 / 每帧重建）**都被日志直接否掉**。
+
+**3. 两个版本的失效 display 数量**
+`validation failed`：1.20.1 = **38**，1.21.1 = **86**（75 × GunDisplayInstance、16 × BlockIndex、2 × AttachmentIndex）。1.21.1 多丢了一倍多。这些枪的 display 实例被 `_DataInstanceManager` 丢弃 → `setRotationAnglesHead` 在 `gunDisplayInstance == null` 处直接 return → 既不驱动层也不停层。这是 CGC 1.21.1 侧的移植问题，值得你单独看（但 1.20.1 也有 38 个，不是唯一差异）。
+
+## 机制定位到了具体字段
+
+顺着 playeranimator 的调用链读到底：
+
+```
+PlayerRendererMixin.applyBodyTransforms
+  → AnimationProcessor.setTickDelta(partialTicks)
+        this.tickDelta = tickDelta;
+        animation.setupAnim(tickDelta);            // ← 唯一把 tickDelta 送进动画的路径
+  → AnimationProcessor.get3DTransform(name, type, value0)
+        animation.get3DTransform(name, type, this.tickDelta, value0)
+```
+
+而 **`KeyframeAnimationPlayer.get3DTransform(...)` 完全忽略传进来的 `tickDelta`**（1.0.2 字节码与 2.0.1 源码一致），它内部 `BodyPart.getBodyRotation` → `Axis.getValueAtCurrentTick`，用的是被 `setupAnim()` 写进 `this.tickDelta` **字段**的值。
+
+**结论：整条链上只要 `setupAnim(partialTicks)` 没跑到或传了 0，姿态就只会按整数 tick 跳变——正好就是"20 Hz / 帧数低 / 移动时抽搐"。**
+
+我把这条链在 1.0.2 与 2.0.1 上逐段核对过，两版实现完全一致：`ModifierLayer.setupAnim`（优先走 `modifiers.get(0)`）、`AnimationContainer.getAnim/setupAnim`、`AbstractFadeModifier.setupAnim`、`KeyframeAnimationPlayer.get3DTransform`、`AnimationProcessor.setTickDelta` 字节码/源码相同。所以问题不在「谁实现得不一样」，而在「那个调用到底有没有发生、传了什么」。
+
+## 新探针（**两个版本都加了，直接可比**）
+
+在混入的 `cgc$playAnimation` 里每 60 帧探一次 loop 层动画的插值状态：
+
+```
+[cgcanim-debug] probe: tickDelta=0.42 tick=37 active=true
+```
+
+- **1.20.1 的 `tickDelta` 在 0..1 间连续变化、1.21.1 恒定（尤其恒为 0）** → 插值确实没生效，病因锁定在 `setTickDelta` 这一环：playeranimator 的 `applyBodyTransforms` 注入点在当前渲染路径下没跑到或被重排，我下一步去 CGC 侧的 mixin 配置和渲染链上找是谁挡的。
+- **两个版本都连续变化** → 插值是好的，那 20 Hz 另有来源，我再看 `tick` 的增长速率与 `active`。
+
+两个版本都编译通过（EXIT=0），1.20.1 现在只有「幂等注册 + 探针」，1.21.1 是「幂等注册 + AnimationCodecs + 探针」。跑一次把两个日志里的 `probe:` 片段给我即可。未提交。
+
+# 
+
+```
+两个日志都好了，再继续排查
+```
+
+# 
+
+Both show `tickDelta` varying smoothly in 0..1 — so interpolation is fine on 1.21.1 too. That kills the tickDelta hypothesis. Let me compare the two environments instead.
+
+Both instances use shader mods (1.20.1 → Oculus, 1.21.1 → Iris). Let me check for shader-pipeline activity in both.
+
+两个日志的探针都读到了，结果**推翻了我上一个假说**，但把范围收到了一处结构性差异上。
+
+## 探针结果：插值是好的，两个版本都正常
+
+```
+1.20.1: tickDelta=0.92 tick=0 / 0.54 tick=9 / 0.94 tick=6 / 0.74 tick=3 / 0.58 tick=0
+1.21.1: tickDelta=0.50 tick=9 / 0.96 tick=0 / 0.84 tick=6 / 0.76 tick=0 / 0.88 tick=5 / 0.18 tick=1
+```
+
+`tickDelta` 两边都在 0..1 之间连续变化，`active=true`，`tick` 是正常的循环推进。而且 1.21.1 的探针间隔还略短（~0.87s/60 帧 ≈ 69fps，1.20.1 约 58fps）——**实际帧率没问题，`setupAnim(partialTicks)` 也在正常喂值**。所以「插值没生效」这条也排除了。
+
+## 至此，我们代码里所有可测的量都是健康的
+
+| 项 | 结果 |
+|---|---|
+| 数据加载 | 4 文件 / 84 动画 ✓ |
+| 层是否被驱动 | 是，且守卫成立（全会话仅 1 次重建）✓ |
+| 逐帧插值 tickDelta | 0..1 连续变化 ✓ |
+| 关掉 `AdjustmentYRotModifier` | 症状不变 ✗（不是它） |
+| SSR | 无关 ✗ |
+| addon 代码 vs TaCZ | 逐字节相同（仅 codec 一处） |
+
+## 剩下的唯一结构性差异：姿态是在哪一步写进去的
+
+这是目前唯一还没被证伪、且能解释全部现象的点：
+
+- **关掉 addon（"正常"那一次）**：CGC 的 `DefaultShooterAnimator` 在 **`setupAnim`（TAIL 注入）里直接写 `ModelPart`**。
+- **打开 addon（抽搐那一次）**：playeranimator 通过自己的 `BipedEntityModelMixin.renderToBuffer(...)` 在 **`renderToBuffer`（`setupAnim` 之后、真正出顶点时）** 改 `ModelPart`。
+
+我核过 jar：`BipedEntityModelMixin` 确实是在 `renderToBuffer` 里应用动画的，`PlayerRendererMixin.applyBodyTransforms` 只负责给 `AnimationProcessor` 喂 tickDelta。**也就是说"正常"和"抽搐"的区别是"姿态在 setupAnim 写"还是"在 renderToBuffer 写"。**
+
+在 Iris/Sodium（以及 1.20.1 那套 Oculus）的**延迟/批处理实体渲染**下，`renderToBuffer` 阶段写进去的姿态有可能被跨帧采样，表现就是抖/抽；而在 `setupAnim` 里写的会随批处理正确捕获。这条也正好解释了为什么"关 addon 就正常"。
+
+这个项目里有过同类先例——之前 1.21.1 的"Sodium 红点 lens"最后查到触发者是 ModernFix 而不是 CGC。
+
+## 需要你配合的两件事
+
+1. **把 shader 相关临时摘掉再测一次**（Iris + Sodium，或先把光影关掉）：抽搐若消失，就锁定为「playeranimator 在 renderToBuffer 写姿态」×「光影的批处理实体渲染」的交互，修复方向不是在移植代码里，而是在渲染层（CGC 侧把动画改成在 `setupAnim` 阶段应用，或与 Iris 的批次对齐），也可以去 Iris 那边确认。
+2. **TaCZ-1.21.1 那次"没问题"是在哪个实例测的？** 是不是就是这个 57 个 mod 的包（Iris/Sodium/ModernFix/PlayerRevive/CameraOverhaul/ItemPhysic 都在）？如果不是同一个包，前面的对照就不成立，那这台机器上多出来的这些渲染类 mod 就是首要嫌疑。
+
+诊断探针还留在两个分支里（`_debugProbeTickDelta` / `_debugLogLoopReplace` / `prepare` 的 loaded 日志），确认完我一次性删掉。1.20.1 目前是「幂等注册 + 探针」，1.21.1 是「幂等注册 + AnimationCodecs + 探针」，都未提交。
+
+# 
+
+```
+1.21.1tacz装了光影后仍然没问题
+1.21.1CGC去了irish和sodium后仍然有问题，日志更新
+```
+
+# 
+
+The animation state is provably healthy on 1.21.1 even without Iris/Sodium. Let me check whether anything *else* in CGC writes the model parts after playeranimator applies them.
+
+Only one caller. Let me compare CGC's model/render mixins between the two branches — that's the last unexamined surface.
+
+CGC's mixin *file set* is identical — let me diff their contents, especially the model/renderer ones.
+
+CGC's mixins are effectively identical. Let me check the instances for another mod that might also register playeranimator layers.
+
+Let me see which mods mix into the same classes on 1.21.1.
+
+ModernFix has an `entity_pose_stack` `PlayerRendererMixin` — and this project has a precedent of ModernFix causing a fake CGC visual bug. Let me check which of these mods exist in the 1.20.1 instance.
+
+**Strong lead.** ModernFix is present only in the 1.21.1 instance — and this project already has a precedent of a "CGC visual bug" turning out to be ModernFix. Let me confirm the details.
+
+**找到了一个非常强的嫌疑，而且这个项目里有过一模一样的先例。**
+
+## 关键差异：ModernFix 只存在于 1.21.1 实例
+
+```
+modernfix:  1.20.1 = 0 次    1.21.1 = 271 次
+```
+（`journeymap` / `itemphysic` / `creativecore` / `passablefoliage` / `cameraoverhaul` 同样只在 1.21.1 有，但 ModernFix 是唯一直接改玩家渲染姿态的。）
+
+而 ModernFix 的 mixin 恰好全部落在我们这条链上：
+
+```
+bugfix.entity_pose_stack.PoseStackAccessor          → com.mojang.blaze3d.vertex.PoseStack
+bugfix.entity_pose_stack.LivingEntityRendererMixin  → net.minecraft.client.renderer.entity.LivingEntityRenderer
+bugfix.entity_pose_stack.PlayerRendererMixin        → net.minecraft.client.renderer.entity.player.PlayerRenderer
+```
+
+配置在 `E:\Software\Minecraft\neoforge1.21.1\config\modernfix-common.toml`。
+
+## 为什么这条能解释**全部**观测
+
+playeranimator 应用姿态的方式是 **在 `PoseStack` 上做变换**（`PlayerRendererMixin.applyBodyTransforms`）+ 在 `renderToBuffer` 里改 `ModelPart`——**正是 ModernFix `entity_pose_stack` 那个补丁重写的代码**。而：
+
+| 观测 | 解释 |
+|---|---|
+| 关 addon 就正常 | 那时姿态由 CGC 的 `DefaultShooterAnimator` 在 `setupAnim` 里直接写 `ModelPart`，**完全不碰 PoseStack**，ModernFix 的补丁影响不到 ✓ |
+| 1.20.1 不抽 | 那个实例**没有 ModernFix** ✓ |
+| 数据/守卫/tickDelta 全部健康 | 状态是好的，坏在姿态应用这一层 —— 与「PoseStack 被改写」完全吻合 ✓ |
+| 去掉 Iris/Sodium 仍抽 | ModernFix 的补丁与光影无关 ✓ |
+
+而且**这个项目里已经有过同一个先例**：1.21.1 那个"Sodium 红点 lens"问题最后查到的触发者是 **ModernFix 而不是 CGC**（当时记录在项目记忆里）。
+
+## 请做这个测试（最省事）
+
+**把 ModernFix 从 1.21.1 实例里摘掉**（或先只关掉它的 `entity_pose_stack` bugfix），再测一次 addon：
+
+- **不抽了** → 定位完成，这是 ModernFix 与 playeranimator 在 PoseStack 上的冲突，不是移植缺陷。后续要么在 ModernFix 侧关补丁，要么在 CGC 侧避开（让动画不依赖 `applyBodyTransforms` 的 PoseStack 路径），我可以往下做。
+- **还抽** → ModernFix 也排除，我接着查 `journeymap` / `shouldersurfing` 那两组也混进 `ModelPart` 的 mixin。
+
+**另外一个必须确认的点**：**TaCZ-1.21.1 那次"没问题"是在哪个实例测的？** 如果它是在 TaCZ 自己的开发实例（多半没有 ModernFix / 这一百来个 mod），那前面的对照就不成立——这也正好解释了"TaCZ 装了光影也没事"。如果确实是在这个 57 mod 的包里测的，那 ModernFix 这条就要打问号，请告诉我，我换个方向。
+
+诊断探针还在两个分支里（`_debugProbeTickDelta`、`_debugLogLoopReplace`、`prepare` 的 loaded 日志），确认完我一次性删干净。当前改动未提交。
