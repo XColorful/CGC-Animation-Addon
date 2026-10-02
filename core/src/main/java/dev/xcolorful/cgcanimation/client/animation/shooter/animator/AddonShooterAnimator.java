@@ -54,5 +54,6 @@ public class AddonShooterAnimator implements IShooterAnimator {
     public void animateShooter(ModelPart head, ModelPart body, ModelPart leftArm, ModelPart rightArm,
                                ILivingShooter iLivingShooter, LivingEntity livingShooter,
                                GunDisplayInstance gunDisplayInstance) {
+        DefaultShooterAnimator.INSTANCE.animateShooter(head, body, leftArm, rightArm, iLivingShooter, livingShooter, gunDisplayInstance);
     }
 }

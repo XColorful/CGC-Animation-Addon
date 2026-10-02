@@ -84,6 +84,7 @@ dependencies {
     annotationProcessor "${mixin_annotation}"
 
     compileOnly fg.deobf("${customgun_maven}")
+    compileOnly fg.deobf("${player_animator_maven}")
 }
 
 tasks.named('jar', Jar).configure {

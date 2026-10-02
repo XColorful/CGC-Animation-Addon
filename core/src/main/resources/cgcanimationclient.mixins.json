@@ -4,6 +4,7 @@
   "compatibilityLevel": "JAVA_17",
   "refmap": "cgcanimation.refmap.json",
   "client": [
+    "playeranimator.PlayerAnimatorCompatMixin"
   ],
   "injectors": {
     "defaultRequire": 1
