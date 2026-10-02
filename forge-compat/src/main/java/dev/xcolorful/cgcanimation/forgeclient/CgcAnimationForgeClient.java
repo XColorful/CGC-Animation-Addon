@@ -1,6 +1,7 @@
 package dev.xcolorful.cgcanimation.forgeclient;
 
 import dev.xcolorful.cgcanimation.client.CgcAnimationClient;
+import net.minecraftforge.fml.loading.FMLPaths;
 
 public class CgcAnimationForgeClient {
 
@@ -9,7 +10,7 @@ public class CgcAnimationForgeClient {
     public static void init() {
         if (initialized) return;
 
-        CgcAnimationClient.init();
+        CgcAnimationClient.init(FMLPaths.GAMEDIR.get(), FMLPaths.CONFIGDIR.get());
         initialized = true;
     }
 }
