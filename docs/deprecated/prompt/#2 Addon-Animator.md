@@ -97,6 +97,7 @@ API 换算：`IGunOperator`→`ILivingShooterGetter.cgc$fromLivingEntity` + `cgc
 # 
 
 [fork1](#fork1)
+[fork2](#fork2)
 
 # fork1
 
@@ -136,3 +137,53 @@ Compiles clean. Let me verify with IDEA and review the diff.
 其余方法本来就已经是直接返回 `@Nullable`（`ClientResourceApi.getGunDisplayInstance`、`IGunGetter.fromItemStack`），无需调整。
 
 改动未提交，等你 review。
+
+# fork2
+
+```
+现在disable后仍然是播放player animator动画，按CGC Animation Addon的设计，unregister后所有监听应该都关掉了，哪里还有残余？
+- 是否是注册到playerAnimator并由playerAnimator调用所以参与?如果是，那得读config boolean来拦截
+```
+
+# 
+
+The user edited `PlayerAnimationManager` to return `@Nullable` instead of `Optional`. Let me read the current state and trace the disable path.
+
+The user committed the port and edited the manager. Let me check the log and the current call sites.
+
+The user has committed and restyled. Let me read the current mixin and manager to answer precisely.
+
+Let me check `ModifierLayer.isActive()` semantics to pick a safe approach.
+
+Now I understand the residual. Let me read the current animator before editing.
+
+Found it. The residual is the mixin itself — I'll gate it on the config and clear already-playing layers on disable.
+
+找到了：**残余不是监听，是混入**。
+
+## 残余在哪
+
+`AddonShooterAnimator.unregister()` 只做了三件事：换回 `DefaultShooterAnimator`、`AnimationManager.unregister()`（退掉 fire/reload/melee/draw 四个 CGC 事件）、写配置 false。
+
+但播放路径根本不走事件：CGC 的 `ShooterAnimationManager.setRotationAnglesHead` **每渲染帧**都会调 `PlayerAnimatorCompat.playAnimation(...)`，而 `PlayerAnimatorCompatMixin` 是类加载时贴上的混入，不随 `unregister` 消失 → 无条件接管并播放。这就是残余。
+
+你猜的「注册到 playerAnimator 由它调用」也对了一半，两层要分开看：
+
+- **驱动层**：混入劫持 `PlayerAnimatorCompat.playAnimation`，每帧把动画重新赋给 `ModifierLayer`。这个不受任何 unregister 影响。
+- **tick 层**：`AnimationDataRegisterFactory.registerData()` 把 93–96 四个层注册进 playerAnimator 的 `PlayerAnimationFactory.ANIMATION_DATA_FACTORY`，playerAnimator 建好 `ModifierLayer` 后**每帧自行 tick**。所以层上只要有过动画，就算不再驱动也会继续播——必须显式 `replaceAnimationWithFade(fade, null)` 才会停。
+
+## 改法（按你说的读 config）
+
+| 文件 | 改动 |
+|---|---|
+| [PlayerAnimatorCompatMixin.java](../CGC-Animation-Addon/core/src/main/java/dev/xcolorful/cgcanimation/client/mixin/playeranimator/PlayerAnimatorCompatMixin.java) | `cgc$playAnimation` 加 `if (!CgcAnimationConfig.enableAnimator) return;`，禁用时不接管，CGC 落到 vanilla animator |
+| [AddonShooterAnimator.java](../CGC-Animation-Addon/core/src/main/java/dev/xcolorful/cgcanimation/client/animation/shooter/animator/AddonShooterAnimator.java) | `unregister()` 增加一次性清理：遍历 `Minecraft.getInstance().level.players()` 调 `AnimationManager.stopAllAnimation(player)`，把还在 tick 的层清空 |
+
+**清理为什么放 unregister 而不是混入里每帧调**：反编译 `ModifierLayer.isActive()` 是「有 modifier 就返回 `modifiers.get(0).isActive()`」，fade-out 的 8 tick 内恒为 true。逐帧调 stop 会逐帧重启 fade、永远结束不了；一次性调用才真正落到 null。
+
+**没拦的三处及原因**：
+- `init()` 的 `registerData()`——纯工厂注册，拦掉的话之后 `/cgcanimation enable` 时层不会被创建（playerAnimator 只在玩家加入时构建 animation stack）。
+- `registerReloadListener` 注册的 `PlayerAnimationManager`——只加载资源、不产生动画；拦掉反而会让 enable 后没数据可用。
+- `stopAllAnimation` 混入——只停不播，保留正好能帮着清残留。
+
+`:core:compileJava` + `:forge-compat:compileJava` 通过（EXIT=0），IDEA 无 error。未实机验证——`/cgcanimation disable` 后应立刻回到 vanilla 姿态，`enable` 后应恢复。改动未提交。

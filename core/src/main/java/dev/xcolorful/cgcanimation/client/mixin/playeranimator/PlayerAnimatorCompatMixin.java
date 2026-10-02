@@ -3,6 +3,7 @@ package dev.xcolorful.cgcanimation.client.mixin.playeranimator;
 import dev.xcolorful.cgcanimation.CgcAnimation;
 import dev.xcolorful.cgcanimation.client.animation.shooter.animator.legacy.AnimationDataRegisterFactory;
 import dev.xcolorful.cgcanimation.client.animation.shooter.animator.legacy.AnimationManager;
+import dev.xcolorful.cgcanimation.client.config.CgcAnimationConfig;
 import dev.xcolorful.cgcanimation.client.resources.assets.PlayerAnimationManager;
 import dev.xcolorful.customgun.CustomGun;
 import dev.xcolorful.customgun.client.api.event.IAddClientReloadListenerEvent;
@@ -56,7 +57,10 @@ public class PlayerAnimatorCompatMixin {
                                           CallbackInfoReturnable<Boolean> cir) {
         if (!(livingEntity instanceof AbstractClientPlayer player)) return;
 
-        if (!AnimationManager.hasPlayerAnimator3rd(gunDisplayInstance)) return;
+        if (
+                !CgcAnimationConfig.enableAnimator
+                || !AnimationManager.hasPlayerAnimator3rd(gunDisplayInstance)
+        ) return;
 
         AnimationManager.playLowerAnimation(player, gunDisplayInstance, limbSwingAmount);
         AnimationManager.playLoopUpperAnimation(player, gunDisplayInstance, limbSwingAmount);

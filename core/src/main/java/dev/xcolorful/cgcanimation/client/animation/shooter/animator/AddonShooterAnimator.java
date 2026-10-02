@@ -10,7 +10,10 @@ import dev.xcolorful.customgun.client.api.item.gun.IShooterAnimationCategory;
 import dev.xcolorful.customgun.client.api.item.gun.ShooterAnimationCategory;
 import dev.xcolorful.customgun.client.resource.instance.assets.GunDisplayInstance;
 import dev.xcolorful.customgun.core.api.entity.ILivingShooter;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.geom.ModelPart;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.player.AbstractClientPlayer;
 import net.minecraft.world.entity.LivingEntity;
 
 /**
@@ -38,6 +41,20 @@ public class AddonShooterAnimator implements IShooterAnimator {
         AnimationManager.unregister();
         CgcAnimationConfig.enableAnimator = false;
         CgcAnimationClient.saveConfig();
+
+        _stopAllPlayerAnimation();
+    }
+    /**
+     * 关闭时清掉已经在播放的动画。{@code ModifierLayer} 一旦被 playerAnimator 接管就会自行 tick，
+     * 仅停止逐帧驱动不会让残留动画停下，必须显式 replace 成 null
+     */
+    private static void _stopAllPlayerAnimation() {
+        ClientLevel level = Minecraft.getInstance().level;
+        if (level == null) return;
+
+        for (AbstractClientPlayer player : level.players()) {
+            AnimationManager.stopAllAnimation(player);
+        }
     }
 
     @Override
