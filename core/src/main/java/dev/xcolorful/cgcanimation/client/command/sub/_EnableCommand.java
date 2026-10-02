@@ -3,6 +3,7 @@ package dev.xcolorful.cgcanimation.client.command.sub;
 import com.mojang.brigadier.Command;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
+import dev.xcolorful.cgcanimation.client.animation.shooter.animator.AddonShooterAnimator;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 
@@ -16,6 +17,7 @@ public class _EnableCommand {
     }
 
     private static int enable(CommandContext<CommandSourceStack> context) {
+        AddonShooterAnimator.register();
         return Command.SINGLE_SUCCESS;
     }
 }
