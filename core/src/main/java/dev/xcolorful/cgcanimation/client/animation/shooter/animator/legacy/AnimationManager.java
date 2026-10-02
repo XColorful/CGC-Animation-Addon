@@ -181,8 +181,8 @@ public class AnimationManager implements ICustomEventHandler {
 
     // --------animation--------
 
-    public static boolean hasPlayerAnimator3rd(GunDisplayInstance display) {
-        var location = display.getPojo().getPlayerAnimatorLocation();
+    public static boolean hasPlayerAnimator3rd(GunDisplayInstance gunDisplayInstance) {
+        var location = gunDisplayInstance.getPojo().getPlayerAnimatorLocation();
         if (location == null) return false;
 
         return PlayerAnimationManager.get().containsKey(location);
@@ -193,10 +193,11 @@ public class AnimationManager implements ICustomEventHandler {
     }
 
     @SuppressWarnings("unchecked")
-    public static void playRotationAnimation(AbstractClientPlayer player, GunDisplayInstance display) {
+    public static void playRotationAnimation(AbstractClientPlayer player,
+                                             GunDisplayInstance gunDisplayInstance) {
         String animationName = BedrockAnimationTag.EMPTY;
         var dataId = ROTATION_ANIMATION;
-        @Nullable var animator3rd = display.getPojo().getPlayerAnimatorLocation();
+        @Nullable var animator3rd = gunDisplayInstance.getPojo().getPlayerAnimatorLocation();
 
         if (
                 animator3rd == null
@@ -214,53 +215,57 @@ public class AnimationManager implements ICustomEventHandler {
         modifierLayer.replaceAnimationWithFade(fadeModifier, new KeyframeAnimationPlayer(keyframeAnimation));
     }
 
-    public static void playLowerAnimation(AbstractClientPlayer player, GunDisplayInstance display, float limbSwingAmount) {
+    public static void playLowerAnimation(AbstractClientPlayer player,
+                                          GunDisplayInstance gunDisplayInstance,
+                                          float limbSwingAmount) {
         // 如果玩家趴下，不播放下半身动画
         if (isPlayerLie(player)) return;
 
         if (player.getVehicle() != null) {
             // 如果玩家骑乘
-            playLoopAnimation(player, display, LOWER_ANIMATION, BedrockAnimationTag.RIDE_LOWER);
+            playLoopAnimation(player, gunDisplayInstance, LOWER_ANIMATION, BedrockAnimationTag.RIDE_LOWER);
             return;
         } else if (isFlying(player)) {
             // 如果玩家在天上，下半身动画就是站立动画
-            playLoopAnimation(player, display, LOWER_ANIMATION, BedrockAnimationTag.HOLD_LOWER);
+            playLoopAnimation(player, gunDisplayInstance, LOWER_ANIMATION, BedrockAnimationTag.HOLD_LOWER);
             return;
         } else if (player.isSprinting()) {
             if (player.getPose() == Pose.CROUCHING) {
-                playLoopAnimation(player, display, LOWER_ANIMATION, BedrockAnimationTag.CROUCH_WALK_LOWER);
+                playLoopAnimation(player, gunDisplayInstance, LOWER_ANIMATION, BedrockAnimationTag.CROUCH_WALK_LOWER);
             } else {
-                playLoopAnimation(player, display, LOWER_ANIMATION, BedrockAnimationTag.RUN_LOWER);
+                playLoopAnimation(player, gunDisplayInstance, LOWER_ANIMATION, BedrockAnimationTag.RUN_LOWER);
             }
             return;
         } else if (limbSwingAmount > 0.05) {
             if (player.getPose() == Pose.CROUCHING) {
-                playLoopAnimation(player, display, LOWER_ANIMATION, BedrockAnimationTag.CROUCH_WALK_LOWER);
+                playLoopAnimation(player, gunDisplayInstance, LOWER_ANIMATION, BedrockAnimationTag.CROUCH_WALK_LOWER);
             } else {
-                playLoopAnimation(player, display, LOWER_ANIMATION, BedrockAnimationTag.WALK_LOWER);
+                playLoopAnimation(player, gunDisplayInstance, LOWER_ANIMATION, BedrockAnimationTag.WALK_LOWER);
             }
             return;
         }
 
         if (player.getPose() == Pose.CROUCHING) {
-            playLoopAnimation(player, display, LOWER_ANIMATION, BedrockAnimationTag.CROUCH_LOWER);
+            playLoopAnimation(player, gunDisplayInstance, LOWER_ANIMATION, BedrockAnimationTag.CROUCH_LOWER);
         } else {
-            playLoopAnimation(player, display, LOWER_ANIMATION, BedrockAnimationTag.HOLD_LOWER);
+            playLoopAnimation(player, gunDisplayInstance, LOWER_ANIMATION, BedrockAnimationTag.HOLD_LOWER);
         }
     }
 
-    public static void playLoopUpperAnimation(AbstractClientPlayer player, GunDisplayInstance display, float limbSwingAmount) {
+    public static void playLoopUpperAnimation(AbstractClientPlayer player,
+                                              GunDisplayInstance gunDisplayInstance,
+                                              float limbSwingAmount) {
         ILivingShooter operator = ILivingShooterGetter.cgc$fromLivingEntity(player);
         float aimingProgress = operator.cgc$getSynAimingProgress();
         if (aimingProgress <= 0) {
             // 疾跑时播放的动画
             if (!isFlying(player) && player.isSprinting()) {
                 if (isPlayerLie(player)) {
-                    playLoopAnimation(player, display, LOOP_UPPER_ANIMATION, BedrockAnimationTag.LIE_MOVE);
+                    playLoopAnimation(player, gunDisplayInstance, LOOP_UPPER_ANIMATION, BedrockAnimationTag.LIE_MOVE);
                 } else if (player.getPose() == Pose.CROUCHING) {
-                    playLoopAnimation(player, display, LOOP_UPPER_ANIMATION, BedrockAnimationTag.CROUCH_WALK_UPPER);
+                    playLoopAnimation(player, gunDisplayInstance, LOOP_UPPER_ANIMATION, BedrockAnimationTag.CROUCH_WALK_UPPER);
                 } else {
-                    playLoopAnimation(player, display, LOOP_UPPER_ANIMATION, BedrockAnimationTag.RUN_UPPER);
+                    playLoopAnimation(player, gunDisplayInstance, LOOP_UPPER_ANIMATION, BedrockAnimationTag.RUN_UPPER);
                 }
                 return;
             }
@@ -268,40 +273,43 @@ public class AnimationManager implements ICustomEventHandler {
             // 行走时的动画
             if (!isFlying(player) && limbSwingAmount > 0.05) {
                 if (isPlayerLie(player)) {
-                    playLoopAnimation(player, display, LOOP_UPPER_ANIMATION, BedrockAnimationTag.LIE_MOVE);
+                    playLoopAnimation(player, gunDisplayInstance, LOOP_UPPER_ANIMATION, BedrockAnimationTag.LIE_MOVE);
                 } else if (player.getPose() == Pose.CROUCHING) {
-                    playLoopAnimation(player, display, LOOP_UPPER_ANIMATION, BedrockAnimationTag.CROUCH_WALK_UPPER);
+                    playLoopAnimation(player, gunDisplayInstance, LOOP_UPPER_ANIMATION, BedrockAnimationTag.CROUCH_WALK_UPPER);
                 } else {
-                    playLoopAnimation(player, display, LOOP_UPPER_ANIMATION, BedrockAnimationTag.WALK_UPPER);
+                    playLoopAnimation(player, gunDisplayInstance, LOOP_UPPER_ANIMATION, BedrockAnimationTag.WALK_UPPER);
                 }
                 return;
             }
 
             if (isPlayerLie(player)) {
                 // 趴下时的动画
-                playLoopAnimation(player, display, LOOP_UPPER_ANIMATION, BedrockAnimationTag.LIE);
+                playLoopAnimation(player, gunDisplayInstance, LOOP_UPPER_ANIMATION, BedrockAnimationTag.LIE);
             } else {
                 // 普通待命
-                playLoopAnimation(player, display, LOOP_UPPER_ANIMATION, BedrockAnimationTag.HOLD_UPPER);
+                playLoopAnimation(player, gunDisplayInstance, LOOP_UPPER_ANIMATION, BedrockAnimationTag.HOLD_UPPER);
             }
         } else {
             if (isPlayerLie(player)) {
                 // 趴下时瞄准
                 if (!isFlying(player) && limbSwingAmount > 0.05) {
-                    playLoopAnimation(player, display, LOOP_UPPER_ANIMATION, BedrockAnimationTag.LIE_MOVE);
+                    playLoopAnimation(player, gunDisplayInstance, LOOP_UPPER_ANIMATION, BedrockAnimationTag.LIE_MOVE);
                 } else {
-                    playLoopAnimation(player, display, LOOP_UPPER_ANIMATION, BedrockAnimationTag.LIE_AIM);
+                    playLoopAnimation(player, gunDisplayInstance, LOOP_UPPER_ANIMATION, BedrockAnimationTag.LIE_AIM);
                 }
             } else {
                 // 普通瞄准
-                playLoopAnimation(player, display, LOOP_UPPER_ANIMATION, BedrockAnimationTag.AIM_UPPER);
+                playLoopAnimation(player, gunDisplayInstance, LOOP_UPPER_ANIMATION, BedrockAnimationTag.AIM_UPPER);
             }
         }
     }
 
     @SuppressWarnings("unchecked")
-    public static void playLoopAnimation(AbstractClientPlayer player, GunDisplayInstance display, ResourceLocation dataId, String animationName) {
-        @Nullable var animator3rd = display.getPojo().getPlayerAnimatorLocation();
+    public static void playLoopAnimation(AbstractClientPlayer player,
+                                         GunDisplayInstance gunDisplayInstance,
+                                         ResourceLocation dataLocation,
+                                         String animationName) {
+        @Nullable var animator3rd = gunDisplayInstance.getPojo().getPlayerAnimatorLocation();
         if (animator3rd == null) return;
 
         if (!PlayerAnimationManager.get().containsKey(animator3rd)) return;
@@ -310,7 +318,7 @@ public class AnimationManager implements ICustomEventHandler {
         if (keyframeAnimation == null) return;
 
         var associatedData = PlayerAnimationAccess.getPlayerAssociatedData(player);
-        @Nullable var modifierLayer = (ModifierLayer<IAnimation>) associatedData.get(dataId);
+        @Nullable var modifierLayer = (ModifierLayer<IAnimation>) associatedData.get(dataLocation);
         if (modifierLayer == null) return;
 
         if (modifierLayer.getAnimation() instanceof KeyframeAnimationPlayer animationPlayer && animationPlayer.isActive()) {
@@ -327,8 +335,11 @@ public class AnimationManager implements ICustomEventHandler {
     }
 
     @SuppressWarnings("unchecked")
-    public static void playOnceAnimation(AbstractClientPlayer player, GunDisplayInstance display, ResourceLocation dataId, String animationName) {
-        @Nullable var animator3rd = display.getPojo().getPlayerAnimatorLocation();
+    public static void playOnceAnimation(AbstractClientPlayer player,
+                                         GunDisplayInstance gunDisplayInstance,
+                                         ResourceLocation dataLocation,
+                                         String animationName) {
+        @Nullable var animator3rd = gunDisplayInstance.getPojo().getPlayerAnimatorLocation();
         if (animator3rd == null) return;
 
         if (!PlayerAnimationManager.get().containsKey(animator3rd)) return;
@@ -337,7 +348,7 @@ public class AnimationManager implements ICustomEventHandler {
         if (keyframeAnimation == null) return;
 
         var associatedData = PlayerAnimationAccess.getPlayerAssociatedData(player);
-        @Nullable var modifierLayer = (ModifierLayer<IAnimation>) associatedData.get(dataId);
+        @Nullable var modifierLayer = (ModifierLayer<IAnimation>) associatedData.get(dataLocation);
         if (modifierLayer == null) return;
 
         IAnimation animation = modifierLayer.getAnimation();
@@ -351,7 +362,8 @@ public class AnimationManager implements ICustomEventHandler {
         stopAllAnimation(player, 8);
     }
 
-    public static void stopAllAnimation(AbstractClientPlayer player, int fadeTime) {
+    public static void stopAllAnimation(AbstractClientPlayer player,
+                                        int fadeTime) {
         stopAnimation(player, LOWER_ANIMATION, fadeTime);
         stopAnimation(player, LOOP_UPPER_ANIMATION, fadeTime);
         stopAnimation(player, ONCE_UPPER_ANIMATION, fadeTime);
@@ -359,9 +371,11 @@ public class AnimationManager implements ICustomEventHandler {
     }
 
     @SuppressWarnings("unchecked")
-    private static void stopAnimation(AbstractClientPlayer player, ResourceLocation dataId, int fadeTime) {
+    private static void stopAnimation(AbstractClientPlayer player,
+                                      ResourceLocation dataLocation,
+                                      int fadeTime) {
         var associatedData = PlayerAnimationAccess.getPlayerAssociatedData(player);
-        @Nullable var modifierLayer = (ModifierLayer<IAnimation>) associatedData.get(dataId);
+        @Nullable var modifierLayer = (ModifierLayer<IAnimation>) associatedData.get(dataLocation);
         if (modifierLayer != null && modifierLayer.isActive()) {
             AbstractFadeModifier fadeModifier = AbstractFadeModifier.standardFadeIn(fadeTime, Ease.INOUTSINE);
             modifierLayer.replaceAnimationWithFade(fadeModifier, null);

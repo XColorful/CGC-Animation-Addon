@@ -37,8 +37,9 @@ public class PlayerAnimationManager extends SimplePreparableReloadListener<Map<R
         return INSTANCE;
     }
 
-    public @Nullable KeyframeAnimation getAnimations(ResourceLocation id, String name) {
-        var animationHashMap = this.animations.get(id);
+    public @Nullable KeyframeAnimation getAnimations(ResourceLocation animationLocation,
+                                                     String name) {
+        var animationHashMap = this.animations.get(animationLocation);
         if (animationHashMap == null) {
             return null;
         }

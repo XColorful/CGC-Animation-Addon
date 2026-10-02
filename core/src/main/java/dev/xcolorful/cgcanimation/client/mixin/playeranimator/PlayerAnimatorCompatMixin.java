@@ -33,7 +33,8 @@ public class PlayerAnimatorCompatMixin {
     }
 
     @Inject(method = "registerReloadListener", at = @At("HEAD"), remap = false)
-    private static void cgc$registerReloadListener(IAddClientReloadListenerEvent event, CallbackInfo ci) {
+    private static void cgc$registerReloadListener(IAddClientReloadListenerEvent event,
+                                                   CallbackInfo ci) {
         if (CustomGun.getMcRegistry().isModLoaded(PlayerAnimator.MOD_ID)) {
             event.addListener(CustomGun.getMcRegistry().createResourceLocation(CgcAnimation.MOD_ID + ":player_animation_manager"),
                     PlayerAnimationManager.get());
@@ -41,21 +42,25 @@ public class PlayerAnimatorCompatMixin {
     }
 
     @Inject(method = "stopAllAnimation", at = @At("HEAD"), remap = false)
-    private static void cgc$stopAllAnimation(LivingEntity livingEntity, CallbackInfo ci) {
+    private static void cgc$stopAllAnimation(LivingEntity livingEntity,
+                                             CallbackInfo ci) {
         if (livingEntity instanceof AbstractClientPlayer player) {
             AnimationManager.stopAllAnimation(player);
         }
     }
 
     @Inject(method = "playAnimation", at = @At("HEAD"), cancellable = true, remap = false)
-    private static void cgc$playAnimation(LivingEntity livingEntity, GunDisplayInstance display, float limbSwingAmount, CallbackInfoReturnable<Boolean> cir) {
+    private static void cgc$playAnimation(LivingEntity livingEntity,
+                                          GunDisplayInstance gunDisplayInstance,
+                                          float limbSwingAmount,
+                                          CallbackInfoReturnable<Boolean> cir) {
         if (!(livingEntity instanceof AbstractClientPlayer player)) return;
 
-        if (!AnimationManager.hasPlayerAnimator3rd(display)) return;
+        if (!AnimationManager.hasPlayerAnimator3rd(gunDisplayInstance)) return;
 
-        AnimationManager.playLowerAnimation(player, display, limbSwingAmount);
-        AnimationManager.playLoopUpperAnimation(player, display, limbSwingAmount);
-        AnimationManager.playRotationAnimation(player, display);
+        AnimationManager.playLowerAnimation(player, gunDisplayInstance, limbSwingAmount);
+        AnimationManager.playLoopUpperAnimation(player, gunDisplayInstance, limbSwingAmount);
+        AnimationManager.playRotationAnimation(player, gunDisplayInstance);
         cir.setReturnValue(true);
     }
 }
