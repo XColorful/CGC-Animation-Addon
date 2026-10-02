@@ -203,14 +203,15 @@ public class AnimationManager implements ICustomEventHandler {
                 || !PlayerAnimationManager.get().containsKey(animator3rd)
         ) return;
 
-        PlayerAnimationManager.get().getAnimations(animator3rd, animationName).ifPresent(keyframeAnimation -> {
-            var associatedData = PlayerAnimationAccess.getPlayerAssociatedData(player);
-            var modifierLayer = (ModifierLayer<IAnimation>) associatedData.get(dataId);
-            if (modifierLayer == null) return;
+        @Nullable var keyframeAnimation = PlayerAnimationManager.get().getAnimations(animator3rd, animationName);
+        if (keyframeAnimation == null) return;
 
-            AbstractFadeModifier fadeModifier = AbstractFadeModifier.standardFadeIn(8, Ease.INOUTSINE);
-            modifierLayer.replaceAnimationWithFade(fadeModifier, new KeyframeAnimationPlayer(keyframeAnimation));
-        });
+        var associatedData = PlayerAnimationAccess.getPlayerAssociatedData(player);
+        @Nullable var modifierLayer = (ModifierLayer<IAnimation>) associatedData.get(dataId);
+        if (modifierLayer == null) return;
+
+        AbstractFadeModifier fadeModifier = AbstractFadeModifier.standardFadeIn(8, Ease.INOUTSINE);
+        modifierLayer.replaceAnimationWithFade(fadeModifier, new KeyframeAnimationPlayer(keyframeAnimation));
     }
 
     public static void playLowerAnimation(AbstractClientPlayer player, GunDisplayInstance display, float limbSwingAmount) {
@@ -305,23 +306,24 @@ public class AnimationManager implements ICustomEventHandler {
 
         if (!PlayerAnimationManager.get().containsKey(animator3rd)) return;
 
-        PlayerAnimationManager.get().getAnimations(animator3rd, animationName).ifPresent(keyframeAnimation -> {
-            var associatedData = PlayerAnimationAccess.getPlayerAssociatedData(player);
-            var modifierLayer = (ModifierLayer<IAnimation>) associatedData.get(dataId);
-            if (modifierLayer == null) {
-                return;
+        @Nullable var keyframeAnimation = PlayerAnimationManager.get().getAnimations(animator3rd, animationName);
+        if (keyframeAnimation == null) return;
+
+        var associatedData = PlayerAnimationAccess.getPlayerAssociatedData(player);
+        @Nullable var modifierLayer = (ModifierLayer<IAnimation>) associatedData.get(dataId);
+        if (modifierLayer == null) return;
+
+        if (modifierLayer.getAnimation() instanceof KeyframeAnimationPlayer animationPlayer && animationPlayer.isActive()) {
+            Object extraDataName = animationPlayer.getData().extraData.get("name");
+            if (extraDataName instanceof String name && !animationName.equals(name)) {
+                AbstractFadeModifier fadeModifier = AbstractFadeModifier.standardFadeIn(8, Ease.INOUTSINE);
+                modifierLayer.replaceAnimationWithFade(fadeModifier, new KeyframeAnimationPlayer(keyframeAnimation));
             }
-            if (modifierLayer.getAnimation() instanceof KeyframeAnimationPlayer animationPlayer && animationPlayer.isActive()) {
-                Object extraDataName = animationPlayer.getData().extraData.get("name");
-                if (extraDataName instanceof String name && !animationName.equals(name)) {
-                    AbstractFadeModifier fadeModifier = AbstractFadeModifier.standardFadeIn(8, Ease.INOUTSINE);
-                    modifierLayer.replaceAnimationWithFade(fadeModifier, new KeyframeAnimationPlayer(keyframeAnimation));
-                }
-                return;
-            }
-            AbstractFadeModifier fadeModifier = AbstractFadeModifier.standardFadeIn(8, Ease.INOUTSINE);
-            modifierLayer.replaceAnimationWithFade(fadeModifier, new KeyframeAnimationPlayer(keyframeAnimation));
-        });
+            return;
+        }
+
+        AbstractFadeModifier fadeModifier = AbstractFadeModifier.standardFadeIn(8, Ease.INOUTSINE);
+        modifierLayer.replaceAnimationWithFade(fadeModifier, new KeyframeAnimationPlayer(keyframeAnimation));
     }
 
     @SuppressWarnings("unchecked")
@@ -331,17 +333,18 @@ public class AnimationManager implements ICustomEventHandler {
 
         if (!PlayerAnimationManager.get().containsKey(animator3rd)) return;
 
-        PlayerAnimationManager.get().getAnimations(animator3rd, animationName).ifPresent(keyframeAnimation -> {
-            var associatedData = PlayerAnimationAccess.getPlayerAssociatedData(player);
-            var modifierLayer = (ModifierLayer<IAnimation>) associatedData.get(dataId);
-            if (modifierLayer == null) return;
+        @Nullable var keyframeAnimation = PlayerAnimationManager.get().getAnimations(animator3rd, animationName);
+        if (keyframeAnimation == null) return;
 
-            IAnimation animation = modifierLayer.getAnimation();
-            if (animation == null || !animation.isActive()) {
-                AbstractFadeModifier fadeModifier = AbstractFadeModifier.standardFadeIn(8, Ease.INOUTSINE);
-                modifierLayer.replaceAnimationWithFade(fadeModifier, new KeyframeAnimationPlayer(keyframeAnimation));
-            }
-        });
+        var associatedData = PlayerAnimationAccess.getPlayerAssociatedData(player);
+        @Nullable var modifierLayer = (ModifierLayer<IAnimation>) associatedData.get(dataId);
+        if (modifierLayer == null) return;
+
+        IAnimation animation = modifierLayer.getAnimation();
+        if (animation == null || !animation.isActive()) {
+            AbstractFadeModifier fadeModifier = AbstractFadeModifier.standardFadeIn(8, Ease.INOUTSINE);
+            modifierLayer.replaceAnimationWithFade(fadeModifier, new KeyframeAnimationPlayer(keyframeAnimation));
+        }
     }
 
     public static void stopAllAnimation(AbstractClientPlayer player) {
@@ -358,7 +361,7 @@ public class AnimationManager implements ICustomEventHandler {
     @SuppressWarnings("unchecked")
     private static void stopAnimation(AbstractClientPlayer player, ResourceLocation dataId, int fadeTime) {
         var associatedData = PlayerAnimationAccess.getPlayerAssociatedData(player);
-        var modifierLayer = (ModifierLayer<IAnimation>) associatedData.get(dataId);
+        @Nullable var modifierLayer = (ModifierLayer<IAnimation>) associatedData.get(dataId);
         if (modifierLayer != null && modifierLayer.isActive()) {
             AbstractFadeModifier fadeModifier = AbstractFadeModifier.standardFadeIn(fadeTime, Ease.INOUTSINE);
             modifierLayer.replaceAnimationWithFade(fadeModifier, null);

@@ -13,6 +13,7 @@ import net.minecraft.server.packs.resources.Resource;
 import net.minecraft.server.packs.resources.ResourceManager;
 import net.minecraft.server.packs.resources.SimplePreparableReloadListener;
 import net.minecraft.util.profiling.ProfilerFiller;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.io.Reader;
@@ -20,7 +21,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Optional;
 
 /**
  * 原 {@code com.tacz.guns.compat.playeranimator.animation.PlayerAnimatorAssetManager}
@@ -37,12 +37,12 @@ public class PlayerAnimationManager extends SimplePreparableReloadListener<Map<R
         return INSTANCE;
     }
 
-    public Optional<KeyframeAnimation> getAnimations(ResourceLocation id, String name) {
+    public @Nullable KeyframeAnimation getAnimations(ResourceLocation id, String name) {
         var animationHashMap = this.animations.get(id);
         if (animationHashMap == null) {
-            return Optional.empty();
+            return null;
         }
-        return Optional.ofNullable(animationHashMap.get(name));
+        return animationHashMap.get(name);
     }
 
     public boolean containsKey(ResourceLocation id) {

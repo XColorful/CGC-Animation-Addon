@@ -93,3 +93,46 @@ API 换算：`IGunOperator`→`ILivingShooterGetter.cgc$fromLivingEntity` + `cgc
 3. **重复加载**：按你的说明 Addon 自建了 `PlayerAnimationManager`，在 CGC 内置那份被删掉前，`player_animator` 目录会被两边各加载一次（仅浪费，无功能冲突）。
 
 未实机验证——`playAnimation` 接管、趴下/骑乘/瞄准各分支与 93–96 层动画需要进游戏 F5 看：`./gradlew :forge-compat:runClient`。改动未提交，等你 review。
+
+# 
+
+[fork1](#fork1)
+
+# fork1
+
+```
+/fork 风格调整：
+- 看下把刚才commit里所有返回Optional<>类型，都改成直接返回值，函数签名加@Nullable，调用处也先一个局部变量@Nullable，把ifPresent改成if (== null) return;再接着后面的逻辑
+- 如果可以改就改，如果playerAnimator强制要求Optional就不用改
+```
+
+# 
+
+Let me check the current state and find every `Optional` return in the changed files.
+
+The work is committed. Only two `Optional` returns exist: `AdjustmentYRotModifier` (forced by playerAnimator's `AdjustmentModifier(Function<String, Optional<PartModifier>>)` — leaving as-is) and my `PlayerAnimationManager.getAnimations`. Let me read the current file.
+
+Now let me apply the changes. First `PlayerAnimationManager`.
+
+The user has reformatted this file. Let me read the rest to get the exact current text.
+
+Now I'll convert the three `.ifPresent` call sites.
+
+Compiles clean. Let me verify with IDEA and review the diff.
+
+改完，`:core:compileJava` 与 `:forge-compat:compileJava` 通过（EXIT=0），IDEA 无 error。
+
+## 改动
+
+**改了：**
+
+- [PlayerAnimationManager.java](../CGC-Animation-Addon/core/src/main/java/dev/xcolorful/cgcanimation/client/resources/assets/PlayerAnimationManager.java) — `getAnimations` 由 `Optional<KeyframeAnimation>` 改为 `@Nullable KeyframeAnimation`，去掉 `Optional` import、加 `org.jetbrains.annotations.Nullable`。
+- [AnimationManager.java](../CGC-Animation-Addon/core/src/main/java/dev/xcolorful/cgcanimation/client/animation/shooter/animator/legacy/AnimationManager.java) — 三处调用 `playRotationAnimation` / `playLoopAnimation` / `playOnceAnimation` 的 `.ifPresent(lambda)` 都改成 `@Nullable var keyframeAnimation = ...; if (keyframeAnimation == null) return;`，lambda 里的 `return;` 直接提升为方法级 `return;`（原来是方法最后一句，语义不变）。
+
+**没改（playerAnimator 强制要求）：**
+
+- [AdjustmentYRotModifier.java](../CGC-Animation-Addon/core/src/main/java/dev/xcolorful/cgcanimation/client/animation/shooter/animator/legacy/AdjustmentYRotModifier.java) — 它是 `Function<String, Optional<AdjustmentModifier.PartModifier>>`，因为 `AdjustmentModifier(Function<String, Optional<PartModifier>>)` 这个构造器签名就是 `Optional`，改不了。
+
+其余方法本来就已经是直接返回 `@Nullable`（`ClientResourceApi.getGunDisplayInstance`、`IGunGetter.fromItemStack`），无需调整。
+
+改动未提交，等你 review。
