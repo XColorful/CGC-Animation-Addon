@@ -1,0 +1,12 @@
+{
+  "package": "dev.xcolorful.cgcanimation.client.mixin",
+  "minVersion": "0.8",
+  "compatibilityLevel": "JAVA_17",
+  "refmap": "cgcanimation.refmap.json",
+  "client": [
+    "playeranimator.PlayerAnimatorCompatMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
