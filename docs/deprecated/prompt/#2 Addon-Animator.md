@@ -756,3 +756,474 @@ playeranimator 应用姿态的方式是 **在 `PoseStack` 上做变换**（`Play
 **另外一个必须确认的点**：**TaCZ-1.21.1 那次"没问题"是在哪个实例测的？** 如果它是在 TaCZ 自己的开发实例（多半没有 ModernFix / 这一百来个 mod），那前面的对照就不成立——这也正好解释了"TaCZ 装了光影也没事"。如果确实是在这个 57 mod 的包里测的，那 ModernFix 这条就要打问号，请告诉我，我换个方向。
 
 诊断探针还在两个分支里（`_debugProbeTickDelta`、`_debugLogLoopReplace`、`prepare` 的 loaded 日志），确认完我一次性删干净。当前改动未提交。
+
+# 
+
+```
+现在接着CGC Animation Addon的#2 Addon-Animator.md，还是没解决，并且只装了必要mod，日志更新在D:\Temp-File\debug-1.21.1.log
+继续排查
+```
+
+# 
+
+I'll start by locating the issue doc and reading the fresh log.
+
+Now let me analyze the fresh log.
+
+Let me look at the actual addon code and its 1.20.1 counterpart.
+
+Let me compare CGC's render-side hookup between the two branches.
+
+Let me inspect the actual playeranimator 2.0.1 implementation.
+
+Let me inspect the 1.21.1 vanilla `PlayerModel.setupAnim` to locate playeranimator's injection point.
+
+Let me systematically diff the addon against TaCZ's original and against its own 1.20.1 branch.
+
+I've been reading code; let me now read the log in full — it's small enough.
+
+Let me check whether I can actually run the client here to observe it directly.
+
+Found a promising lead — both playeranimator and CGC mixin into `ItemInHandLayer`. Let me compare.
+
+Let me search for known issues with this combination.
+
+Let me compare playeranimator 1.0.2 (1.20.1) against 2.0.1 (1.21.1) — the model apply path specifically.
+
+Let me check the actual released CGC jar the addon compiles against — that's what the user runs.
+
+Promising lead — let me check whether CGC calls `renderHand` (which trips playeranimator's first-person flag) during third-person rendering.
+
+Let me check CGC's third-person gun renderer for `renderHand` — that would trip playeranimator's first-person flag.
+
+Let me check whether the client player's tick actually reaches `Player.tick()` — that's what drives the animation clock.
+
+I've now verified the port is faithful and the state is healthy; the remaining unknown is whether the applied pose is smooth per frame. Let me add a decisive probe.
+
+Adding two more cheap probes to make this round conclusive: explicit loop-replace logging and `stopAllAnimation` frequency.
+
+我把这轮能静态验证的都验证完了，结论是**没找到根因**，但把范围压到了一个之前从未被测量过的点上，并为此加好了探针、编译并打出 jar。下面按事实—核对—下一步说。
+
+## 一、新日志（极简实例）确立的事实
+
+| 观测 | 结论 |
+|---|---|
+| 有 mixin 的 mod 只有 `customgun` / `cgccpackloader` / `playeranimator` / `cgcanimation` | ModernFix、Iris、Sodium **确实都不在了** → 上一轮的 ModernFix 假说被实测否掉 |
+| 全程只有 1 次 `Reloading ResourceManager` | 幂等注册守卫确实与本病无关 |
+| `player_animator loaded: 4 file(s), 84 animation(s)` | 资源装配正常 |
+| `loop replace` 全会话只打 1 条、`probe` 全部 `active=true` | 各层稳定、未被每帧重建 |
+| **无 bendy-lib** | playeranimator 的「上下身分两段渲染」路径（`Helper.isBendEnabled()`）根本没走，可以排除 |
+
+另外我把 probe 的 `tick` 序列重算了一遍（8,0,12,0,8,1,7,25,5,10,3,9,1,2,6）。按每次采样间隔 0.6–1.5s 反推，**它和「≈12 tick 的循环动画 + 20Hz 推进」完全自洽**——即动画时钟也是正常的，我上一轮对它的怀疑可以撤回。
+
+## 二、这轮核对的代码（都没发现差异）
+
+- **反编译了你实际在跑的发布 jar** `custom-gun-continued-1653554-8953760`：`ShooterAnimationManager.setRotationAnglesHead` 里确实有 `playAnimation(...) == true → return`，不会和 CGC 自家 animator 双写。
+- addon ↔ TaCZ-1.21.1 的 playeranimator 包逐方法比对，仍然只差 `AnimationCodecs` 一处。
+- **关键补充**：1.20.1 用的 `playeranimator 1.0.2-rc1+1.20` 和 1.21.1 编译用的 `2.0.4+1.21.1`，在「把姿态写进模型」这条路径上**结构完全相同**——`setEmote` 都注入在 `PlayerModel#setupAnim` 的第一个 `copyFrom`；两个 MC 版本的 `PlayerModel#setupAnim` 都是 `super.setupAnim()` + 5 个 `copyFrom`，顺序一致；`HumanoidModel#setupAnim` 结尾都是 `hat.copyFrom(head)`。**写入时机、渲染顺序、层优先级（93–96）三方都没差异。**
+
+## 三、剩下唯一没被测量过的环节
+
+之前所有探针读的都是**动画自己的数据**（tickDelta / tick / extraData name）——它们只能证明**输入**平滑，证明不了**输出**平滑。中间还隔着 `AnimationStack.isActive()` → `setEmote` → 淡化链 → `AbstractFadeModifier`。
+
+所以这轮加的是直接读**最终 ModelPart** 的探针（已编译、已验证进 jar）：
+
+| 探针 | 位置 | 读法 |
+|---|---|---|
+| `pose #N limb= armX= legX= legY= headX=` | `PlayerModel#setupAnim` 的 TAIL（playeranimator 写完姿态之后、这帧真正画出来之前），每 300 帧连打 12 帧 | 12 帧的值**连续变化** ⇒ 姿态本身平滑，问题在渲染侧；**armX 在动画值与≈0 的僵直值之间来回跳** ⇒ `setEmote` 被隔帧跳过；**值长时间不动** ⇒ 时钟没走 |
+| `loop replace #N` 改为**前 60 次全打** | `AnimationManager` | 之前 `%120==1` 只能告诉你「少于 121 次」，现在能看出是每秒 1 次还是每秒 30 次 |
+| `stopAllAnimation #N` 前 60 次全打 | `PlayerAnimatorCompatMixin` | CGC 若每帧都在停层，同样会抽搐，这条以前从没测过 |
+
+改动文件（都在 CGC-Animation-Addon-1.21.xneoforge）：
+- [PlayerPoseDiagMixin.java](core/src/main/java/dev/xcolorful/cgcanimation/client/mixin/diag/PlayerPoseDiagMixin.java)（新增）
+- [cgcanimationclient.mixins.json](core/src/main/resources/cgcanimationclient.mixins.json)
+- [AnimationManager.java](core/src/main/java/dev/xcolorful/cgcanimation/client/animation/shooter/animator/legacy/AnimationManager.java)
+- [PlayerAnimatorCompatMixin.java](core/src/main/java/dev/xcolorful/cgcanimation/client/mixin/playeranimator/PlayerAnimatorCompatMixin.java)
+
+`:core:compileJava` + `:neoforge-compat:compileJava` + `:neoforge-compat:jar` 全部 EXIT=0，jar 在 `neoforge-compat/build/libs/cgcanimation-0.0.0-neoforge-1.21.x.jar`（已验证 `diag.PlayerPoseDiagMixin` 与配置都在包里）。改动未提交。
+
+```
+cd D:/Github/CGC-Animation-Addon-1.21.xneoforge && ./gradlew :neoforge-compat:jar
+```
+
+## 四、顺便必须问清的一点
+
+**TaCZ-1.21.1 那次「不抽搐」时，你确认看到的确实是枪包里的 `player_animator` 动画吗？** 判据是腿在走路时播 `*_lower` 的半蹲/走姿、而不是原版摆腿。如果那边 `hasPlayerAnimator3rd` 其实是 false，你看到的是 TaCZ 自己的第三人称动画，那「TaCZ 不抽 ⇒ 病不在移植代码里」这条推理就不成立，前面的排除要重来。
+
+跑一次把 `pose #` / `loop replace #` / `stopAllAnimation #` 三段给我即可，诊断代码确认完我一次性删干净。
+
+# 
+
+```
+1.21.1的日志更新了，CGC用的是当前CGC1.21.1最新编译的，不是传CurseForge的
+1.21.1tacz用的是player animator的动画
+```
+
+# 
+
+The diag mixin failed to apply (`@Shadow` can't reach inherited fields, no refmap) — but the log now has 10 loop-replace lines. Let me read them first.
+
+The diag mixin failed to apply (`@Shadow` can't reach fields declared in `HumanoidModel`, and NeoForge loads no refmap). The loop-replace data is clean, though — let me fix the probe.
+
+新日志读完了 —— 三条结论：一条彻底排除、一条彻底排除、探针本身挂了（已修）。
+
+## 1. 对照组现在成立
+
+你确认 TaCZ-1.21.1 走的确实是枪包里的 player animator 动画 ⇒ 「同一份移植代码在 TaCZ 上不抽」成立 ⇒ **病不在移植代码里**，而在 CGC 侧或两边装配方式的差异。这条我记下了。
+
+## 2. 这次日志新增的证据
+
+**`loop replace` 前 10 次全打出来了，全部对应真实状态切换，没有一次是每帧重建：**
+
+| # | 时间 | 层 | 切换 |
+|---|---|---|---|
+| 1,2 | 19.766 / 19.782 | lower / loop_upper | `<inactive>` → `hold_*`（进世界首次） |
+| 3,4 | 20.170 / 20.171 | lower / loop_upper | `hold_*` → `run_*` |
+| 5 | 21.705 | loop_upper | `run_upper` → `aim_upper` |
+| 6 | 21.728 | lower | `run_lower` → `walk_lower` |
+| 7 | 22.458 | lower | `walk_lower` → `run_lower` |
+| 8 | 22.613 | loop_upper | `aim_upper` → `run_upper` |
+| 9,10 | 24.828 / 24.829 | lower / loop_upper | `run_*` → `walk_*` |
+
+5 秒 10 次（≈2/s），全是走/跑/瞄准的真实切换 ⇒ **「守卫失效导致每帧重建」彻底排除。**
+
+**`stopAllAnimation` 全程一次都没调用**（前 60 次计数为 0）⇒ **「CGC 每帧停层」也排除。**
+
+**姿态探针没生效**，日志里明确报错：
+
+```
+Mixin apply for mod cgcanimation failed ... diag.PlayerPoseDiagMixin -> net.minecraft.client.model.PlayerModel:
+@Shadow field head was not located in the target class net.minecraft.client.model.PlayerModel. No refMap loaded.
+```
+
+`head`/`rightArm`/`leftLeg` 声明在 `HumanoidModel`，不在 `PlayerModel`；NeoForge 不加载 refmap，`@Shadow` 只在目标类里找。**已改成不 Shadow、直接 `(PlayerModel) (Object) this` 取模型实例**（这也解释了为什么 CGC 自己的 `PlayerModelMixin` 能 Shadow `leftSleeve` —— 那两个字段确实声明在 `PlayerModel` 里）。混入失败只记 WARN、游戏照常跑，`PlayerAnimatorCompatMixin` 的 4 个注入点不受影响。
+
+## 3. 一个下次值得留意的观察
+
+每次 `loop replace` 都是 `new KeyframeAnimationPlayer(...)` ⇒ **动画从 tick 0 重头开始，只靠 8 tick 交叉淡化**。这次 5 秒里你做了 run↔walk、aim↔run 共 4 次切换，腿的循环每次都被打回起点。
+
+- 若搐动是「隔一小会儿腿猛地弹一下」，那就是这个：状态在阈值边缘来回翻（`limbSwingAmount > 0.05` 与 `isSprinting()` 两个阈值），每次都重打回起点。
+- **判据：下次看 `loop replace` 是不是成串出现**（一秒内 5 条以上）。成串 ⇒ 状态抖动，不是动画本身的问题。
+
+## 4. 新 jar（探针已修好）
+
+```
+cd D:/Github/CGC-Animation-Addon-1.21.xneoforge && ./gradlew :neoforge-compat:jar
+```
+
+产物：`neoforge-compat/build/libs/cgcanimation-0.0.0-neoforge-1.21.x.jar`（`:core:compileJava` / `:neoforge-compat:jar` 均 EXIT=0，已确认 jar 内配置含 `diag.PlayerPoseDiagMixin`）。
+
+**跑的时候请连续走一段路、再 ADS 一下**（别站着不动），然后给我 `pose #` 段落。每 150 帧连打 20 帧，格式：
+
+```
+pose #N limb=<摆幅> sprint=<bool> pose=<枚举> armX= legX= legY= headX=
+```
+
+读法：
+
+| 看到什么 | 结论 |
+|---|---|
+| 相邻帧的 `legX`/`armX` 连续变化 | 最终姿态是平滑的 ⇒ 病在渲染侧，我转去查 CGC 的第三人称渲染链 |
+| `armX` 在 ≈-1.5（动画值）与 ≈0（僵直值）之间来回跳 | `setEmote` 被隔帧跳过 ⇒ 锁定 `PlayerModel` 的 `firstPersonNext` 分支 |
+| 值长时间不动、再突然跳一大格 | 动画时钟没走 / 循环在重打回起点 |
+| `loop replace` 成串刷 | 状态阈值抖动，不是动画问题 |
+
+改动仍全部未提交（addon 1.21.1 分支：新增 `PlayerPoseDiagMixin` + 混入配置，`AnimationManager` 的 replace 计数改为前 60 条全打，`PlayerAnimatorCompatMixin` 加 `stopAllAnimation` 计数），诊断代码确认完一次性删干净。
+
+# 
+
+```
+1.21.1日志更新，这个抽搐不是在切换的时候有，是播放动画的时候就一直有抽搐
+```
+
+# 
+
+The pose data is decisive — let me look at it closely and compare against the animation's own keyframes.
+
+The pose data is the breakthrough — let me look at it against the actual keyframes.
+
+The pose data is out of range for any leg animation — that's decisive. Let me add a probe that reads the animation's raw value and the playeranimator active flag at the same instant.
+
+这轮拿到了**决定性数据**：写进模型的腿角度超出了该动画本身能产生的范围。
+
+## 1. 实测值 vs 动画键值
+
+```
+walk_lower  left_leg.x 键值范围 : -0.4099 … +0.7413 rad   (14 tick 循环)
+run_lower   left_leg.x 键值范围 : -0.4884 … +0.9159 rad   (12 tick 循环)
+实测 leftLeg.xRot              : -0.662  … +1.243  rad
+```
+
+**两边都对不上。** 而且 `+1.243` 正好等于原版摆腿幅度 `1.4 × limbSwingAmount`（该段 `limb=0.881` → 1.233），`hold_lower` 更是只有 −0.087 的常量。
+
+## 2. 更关键的：分段形状
+
+拿 burst 600–619（sprint=false，走路）逐帧看：
+
+```
+600 -0.2536
+601  0.10891634   ← 正好等于 walk_lower 第 3 tick 的键值 0.1089（动画生效）
+602  0.17117172   ┐
+603  0.21959257   │ 斜率 +0.05/帧，与 walk_lower 上升段一致
+604  0.26109618   │
+605  0.3441034    ┘
+606 -0.63814795   ┐
+607 -0.5966444    │ 同一斜率 +0.05，但整段被平移出动画范围
+608 -0.5482236    │
+609 -0.49288547   │
+610 -0.44100595   ┘
+611  0.7507789    ← 又回到动画峰值附近（walk_lower 第 7 tick = 0.7413）
+612  0.832988     ┐ 再次整体上移，超出动画上限
+613  0.8709307    │
+614  0.91519696   │
+615  0.96894896   │
+616  1.0163773    ┘
+617 -0.20094845
+618 -0.14403445
+619 -0.08712058
+```
+
+**每段内部的斜率（+0.05 rad/帧）就是动画自己的斜率**（walk_lower 上升段 1.151 rad / 7 tick，@75fps ≈ 0.0439 rad/帧），**但整段每隔 4–6 帧被整体挪位一次**。
+
+⇒ 这不是「原版动画漏出来」（原版坡度是 ±1.23 的余弦，斜率约 0.22/帧，对不上），而是**同一个动画信号被周期性错位** —— 最可能是动画的 `currentTick` 在跳。这正好就是"一直抽"。
+
+## 3. 已排除的（这轮日志）
+
+- `loop replace` 全程 **11 次**，逐条都是真实状态切换（hold→run、run→aim、aim→run、run→walk…）⇒ 不是每帧重建。
+- `stopAllAnimation` **0 次** ⇒ 不是 CGC 在停层。
+- `limb` / `sprint` / `pose` 在各段内不变 ⇒ 不是状态抖动导致的换动画。
+
+## 4. 新探针（已编译，jar 已重打）
+
+同一行里同时打出**动画原始值**和**模型最终值**，一次跑就能把原因劈开：
+
+```
+pose #N limb=… sprint=… armX=… legX=… legY=… | active=… rawLegX=… tick=… td=… playing=…
+```
+
+| 现象 | 结论 |
+|---|---|
+| `rawLegX` 也在跳 | 动画求值层的问题 ⇒ 我去查 `currentTick` / `returnToTick` 那条链 |
+| `rawLegX` 平滑、`legX` 跳 | 写入被打断（`setEmote` 被跳过）⇒ 看 `active=` |
+| `active=false` 的帧 | `AnimationStack` 失活导致整帧不写动画 |
+| `tick` 在 burst 内非单调 | 动画时钟被反复重置 — 直接对应上面的错位 |
+
+产物路径不变：
+
+```
+cd D:/Github/CGC-Animation-Addon-1.21.xneoforge && ./gradlew :neoforge-compat:jar
+```
+
+`neoforge-compat/build/libs/cgcanimation-0.0.0-neoforge-1.21.x.jar`（EXIT=0）。跑的时候**一直走一段路**（别停），给我几段 `pose #` 就行。改动仍未提交。
+
+# 
+
+```
+1.21.1日志更新，继续排查
+```
+
+# 
+
+`rawLegX == legX` exactly, `active=true` every frame, `tick` monotonic, `td` smooth — yet the animation's own value function jumps out of its keyframe range. That points at the parsed animation data. Let me compare with how TaCZ-1.21.1 parses the same files.
+
+Let me get the parsed keyframe data straight from the running game — that will show whether the data or the evaluation is wrong.
+
+Let me dump the parsed keyframe data straight from the game — that separates bad data from bad evaluation.
+
+Let me check the other gun packs' leg animations — the display might reference a different one.
+
+这轮探针把范围收得非常干净了。
+
+## 1. 已经证明「不是写入被打断」
+
+```
+#150 tick=3 td=0.04  legX=1.1256807   rawLegX=1.12568
+#151 tick=3 td=0.32  legX=1.1821676   rawLegX=1.18217
+#155 tick=4 td=0.24  legX=-0.24614823 rawLegX=-0.24615
+#162 tick=6 td=0.04  legX=0.48866972  rawLegX=0.48867
+```
+
+- `rawLegX` **逐帧与 `legX` 完全相等** ⇒ `setEmote` 每帧都忠实写入，我上一轮"写入被打断"的猜测**推翻**。
+- `active=true` **全程为真** ⇒ `AnimationStack` 没有失活。
+- `tick` 单调推进（3,3,3,3,3,4,4,4,4,5,5,5,6…），`td` 每 tick 内 0.04→1.00 平滑走完 ⇒ **动画时钟完全正常**。
+- `hold_lower`（常量）**求值完全正确**：全程 `-0.08718391`，正好是 JSON 里的 `-4.99527°` 换算结果。
+
+## 2. 真正的问题：动画自己返回的值跑出了键值范围
+
+| | 键值范围（从 JSON 算出） | 实测 `rawLegX` |
+|---|---|---|
+| `run_lower` sprint=true | −0.4884 … **+0.9159** | 到 **+1.31935** |
+| `walk_lower` 走路 | −0.4099 … **+0.7413** | 到 **+1.243** |
+
+而且是在**同一 tick 内**跨出去的：
+
+```
+#153 tick=3 td=0.76  rawLegX= 1.27093
+#154 tick=3 td=1.00  rawLegX= 1.31935
+#155 tick=4 td=0.24  rawLegX=-0.24615    ← 0.24 tick 内跳 -1.565
+#165 tick=6 td=0.82  rawLegX= 0.32533
+#166 tick=7 td=0.10  rawLegX= 1.10435    ← 跳 +0.779
+```
+
+**但同一段里的斜率是对的**：`+0.2018/tick` 正是 `run_lower` 第 2→6 tick 段的斜率，`−0.2094/tick` 正是第 6→8 tick 段——**说明选段没错，整段被平移了**。
+
+我还把三个枪包（rifle / pistol / minigun）的 `walk_lower`/`run_lower` 都算了一遍，没有任何一个能到 ±1.32 ⇒ **不是"播了别的动画"**。
+
+⇒ 结论：**`KeyframeAnimationPlayer` 在手头这份数据上求值越界**。而 TaCZ-1.21.1 用的是逐字节相同的解析与求值代码。所以要么这份 `KeyframeAnimation` 的数据和 TaCZ 拿到的不一样，要么求值环节有我没看到的东西。
+
+## 3. 新探针：直接把解析结果打出来
+
+每个动画只打一次：
+
+```
+ANIM run_lower begin= end= stop= ret= inf= easeBefore=
+  pitch (tick,value,ease)(tick,value,ease)… enabled=true
+  yaw   …   enabled=
+  roll  …   enabled=
+```
+
+| 打出来的键帧 | 结论 |
+|---|---|
+| 就是 JSON 的 `0/2/6/8/10/12` 与对应弧度值 | 数据没问题 ⇒ 求值环节，我去查 `getValueFromKeyframes` 的 `tickBefore/tickAfter/returnToTick` 分支 |
+| tick 或值对不上（例如 tick 变成 0/1/3/4/5/6 = 秒数没乘 20） | 解析/编解码环节，我改 `PlayerAnimationManager` 的解析路径 |
+| `ret=` / `inf=` / `easeBefore=` 异常 | 同上 |
+
+顺带 `hold_lower` 也会打出来做对照（它的值已经证明是对的）。
+
+```
+cd D:/Github/CGC-Animation-Addon-1.21.xneoforge && ./gradlew :neoforge-compat:jar
+```
+
+产物：`neoforge-compat/build/libs/cgcanimation-0.0.0-neoforge-1.21.x.jar`（EXIT=0）。跑的时候**站着别动几秒、再走一段、再冲刺一段**，这样 `hold_lower`/`walk_lower`/`run_lower` 三份数据都会被 dump 出来。改动仍未提交。
+
+# 
+
+```
+日志更新，继续排查
+```
+
+# 
+
+**Found the data.** The parsed keyframes are exactly right — but every keyframe's ease is `CATMULLROM`, while the JSON says `INOUTSINE`. Let me verify whether that reproduces the observed values.
+
+**Root cause found.** Let me confirm by comparing `Easing.catmullRom` between the 1.20.1 and 1.21.1 playeranimator versions.
+
+**Root cause confirmed by arithmetic.** Let me verify the exact match and find which parser produced `CATMULLROM`.
+
+**Simulation reproduces the observed values exactly.** Let me pin down which parser assigns `CATMULLROM`.
+
+**Everything is explained.** Let me confirm the last link — 1.0.2's `Ease` has no `CATMULLROM`, so the old pack's `catmullrom` degrades to LINEAR there.
+
+找到了，**根因已用数值逐位对上**。
+
+## 根因：playeranimator 2.0.x 的 `Easing.catmullRom` 是坏的
+
+`dev.kosmx.playerAnim.core.util.Easing`（2.0.x）：
+
+```java
+public static float catmullRom(float n) {
+    return (0.5f * (2.0f*(n + 1) + ((n + 2) - n) * 1
+            + (2.0f*n - 5.0f*(n + 1) + 4.0f*(n + 2) - (n + 3)) * 1
+            + (3.0f*(n + 1) - n - 3.0f*(n + 2) + (n + 3)) * 1));
+}
+```
+
+把后面三项展开，系数全部抵消，**整个函数等于 `n + 2`**。而 `Ease.CATMULLROM = easeInOut(Easing::catmullRom)`，于是：
+
+| f | ease(f) |
+|---|---|
+| 0.4999 | **+1.4999** |
+| 0.5000 | **−0.5000** |
+
+⇒ **在每段键帧的正中间有一个 2.0 的跳变。** `getValueFromKeyframes` 做的是 `lerp(ease(f), before, after)`，所以**每段插值参数被整体 ±1 平移，并在段中点弹跳 `2×(after−before)`**。
+
+拿 `run_lower` 的 left_leg 第 2→6 tick 段验算（before=0.10892, after=0.91587, Δ=0.80696）：
+
+```
+f 略小于 0.5 → ease=1.5  → 0.10892 + 1.5*0.80696  = +1.31936   实测 +1.31935 ✔
+f = 0.56     → ease=-0.44 → 0.10892 - 0.44*0.80696 = -0.24614   实测 -0.24615 ✔
+```
+
+我把整条 `getValueAtCurrentTick`+`getValueFromKeyframes` 用 node 复刻后跑你日志里的 12 个点，**10 个点小数点后 5 位完全一致**（另外 2 个是我模拟在整数 tick 边界选段的偏差）。`hold_lower` 之所以看起来正常，是因为它段内前后值相等，`2×(after−before)=0`，平移被抵消。
+
+## 为什么只有 1.21.1 中招
+
+| | playeranimator | `Ease` 里有没有 `CATMULLROM` | 老枪包的 `"lerp_mode": "catmullrom"` 解析成 |
+|---|---|---|---|
+| 1.20.1 addon | **1.0.2** | **没有**（javap 确认） | `valueOf` 抛异常 → 兜底 **`LINEAR`** → 平滑 |
+| 1.21.1 addon | **2.0.4** | 有 | `Ease.CATMULLROM` → **上面那个坏函数** → 抽搐 |
+
+## 为什么 TaCZ-1.21.1 是好的 —— 它把包改了
+
+```
+D:/Github/TACZ/…/rifle_default.player_animation.json        →  1140 处 "lerp_mode": "catmullrom"
+D:/Github/TACZ-1.21.1/…/rifle_default.player_animation.json →  1140 处 "lerp_mode": "INOUTSINE"
+```
+
+TaCZ-1.21.1 自己的枪包已经被改写成 `INOUTSINE`，所以你那次对照测不到这个 bug。而你的 CGC 实例走 `cgccpackloader` 加载的是**老包**（`catmullrom`），撞上了 2.0.x 的坏实现。日志里那份 dump 全被解析成 `CATMULLROM`，就是铁证。
+
+## 修法（需要你定一个）
+
+| 方案 | 做法 | 影响面 |
+|---|---|---|
+| **A 换包** | 把枪包的 `catmullrom` 改成 `inoutsine`（= TaCZ-1.21.1 的做法） | 零代码，但**所有**老枪包/第三方包仍会中招 |
+| **B addon 侧数据归一** | 在 `PlayerAnimationManager` 里把 `lerp_mode` 解析成 `CATMULLROM` 的键帧改写成 `linear` 再交给 `AnimationCodecs` | 只动 addon，覆盖所有老包；等价于 1.20.1 的实际行为 |
+| **C addon 侧 mixin 修库** | `@Inject` 到 `Easing.catmullRom` 让它返回 `n`（等价 LINEAR） | 一行，但会改掉**整个实例里所有 mod** 的行为 |
+| **D 上游** | 报给 playeranimator（`Easing.catmullRom` 实现本身就是错的） | 正解，但周期长 |
+
+我倾向 **B**：可解释、可移除、只影响本 addon，且与 1.20.1 的表现完全一致（1.20.1 实际就是退化成 LINEAR）。
+
+**在动手前建议先做一次一分钟、零编译的验证**：把你 CGC 实例里 `tacz_default_gun` 的 `rifle_default.player_animation.json` 的 `"catmullrom"` 全替换成 `"inoutsine"`，进游戏看抽搐是否消失。消失了就 100% 坐实，我再按你选的方案改。
+
+诊断代码还在（`PlayerPoseDiagMixin` + `AnimationManager`/`PlayerAnimatorCompatMixin` 计数），确认完一次性删干净。改动仍未提交。
+
+# 
+
+```
+确实生效，按B修
+并且git查一下1.21.1TaCZ当时的commit描述
+```
+
+# 
+
+Root cause confirmed. Let me first check that TaCZ commit, then implement B.
+
+That's the commit: **`0c884f33` "fix \`playeranimator\` compat, I guess"** (MUKSC, 2025-01-16) — a pure `"lerp_mode": "catmullrom"` → `"INOUTSINE"` rewrite, 1140 lines in rifle + 1124 in pistol, no other change. Let me now check my working tree and implement B.
+
+Now implementing fix B and stripping all diagnostics.
+
+Fix compiles. Let me validate the transform against the real (old) gun pack offline.
+
+已按 B 修好，诊断代码全部移除。
+
+## 你要的那条 commit
+
+| | |
+|---|---|
+| 仓库 | `XColorful/TACZ-1.21.1`（1.21.1 非官方移植） |
+| commit | `0c884f335ac2795db25068a221ef59a8eff7fcd0` |
+| 作者 | MUKSC `<68376185+MUKSC@users.noreply.github.com>` |
+| 日期 | Thu Jan 16 19:36:22 2025 +0900 |
+| 描述 | `fix \`playeranimator\` compat, I guess`（正文为空，就这一行） |
+| 改动 | 只有 `pistol_default.player_animation.json` 和 `rifle_default.player_animation.json`，2264 行 +/− 完全 1:1 —— 就是把 1140（rifle）+ 1124（pistol）处 `"lerp_mode": "catmullrom"` 改成 `"lerp_mode": "INOUTSINE"`，没有任何别的改动 |
+
+也就是他当年也是靠**改包**绕开的，跟我们实测出来的机制完全对上。
+
+## 改动（1.21.1 addon，未提交）
+
+只动一个文件：[PlayerAnimationManager.java](core/src/main/java/dev/xcolorful/cgcanimation/client/resources/assets/PlayerAnimationManager.java)
+
+- `prepare()` 里先把文件读成 `byte[]`，过一遍 `fixBrokenEase(...)` 再交给 `AnimationCodecs`（用 `ByteArrayInputStream` 供货，两个 json codec 各拿一份新流）。
+- 新增 `fixBrokenEase / fixAnimations / fixKeyFrame`：走 `animations → <动画> → bones → <骨骼> → <通道> → <时间> → 键帧`，把 `lerp_mode`/`easing` 里大小写不敏感等于 `catmullrom` 的值改写成 `linear`；**没有命中就直接返回原字节**，不动其它文件，也不重新序列化。
+- 归一成 `linear` 是为了和 **1.20.1 分支的实际行为**一致（1.0.2 的 `Ease` 没这个枚举值，`easeFromString` 抛异常兜底成 `LINEAR`）。如果你要的是和 **TaCZ-1.21.1 视觉一致**，把 `FALLBACK_EASE` 改成 `"inoutsine"` 即可，就这一个常量。
+
+**移除的诊断**（全部还原到 HEAD）：`diag.PlayerPoseDiagMixin` 及其包、`cgcanimationclient.mixins.json` 的注册、`AnimationManager` 的 `_debugLogLoopReplace`/`_debugProbeTickDelta`、`PlayerAnimatorCompatMixin` 的 stop 计数与探针调用。`git status` 现在只剩上面那一个文件（它还带着上一轮那个 `AnimationSerializing → AnimationCodecs` 的对齐改动，两者是一套的）。
+
+## 验证
+
+- `:core:compileJava` + `:neoforge-compat:compileJava` + `:neoforge-compat:jar` 全 EXIT=0，产物 `neoforge-compat/build/libs/cgcanimation-0.0.0-neoforge-1.21.x.jar`。
+- 把 `fixBrokenEase` 的遍历逻辑用脚本跑在真包上：`rifle_default` 命中 **1140** 处、`pistol_default` **1124**、`minigun` **355**，且这三个包里 ease 值**只有** `catmullrom` 一种；TaCZ-1.21.1 那份（`INOUTSINE`）一处都不会被改。数字和 `0c884f33` 的 diff 完全吻合。
+
+**没动 1.20.1 分支**：那边 catmullrom 本来就被兜底成 LINEAR，加这段是纯冗余。如果你想让两边代码对称，说一声我补过去。
+
+改动未提交，等你 review。建议进游戏确认一次（走 / 跑 / 瞄准各来一段），确认后我再把 `#2` 那份文档补上这次结论。
