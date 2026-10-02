@@ -1,6 +1,7 @@
 package dev.xcolorful.cgcanimation.neoforgeclient;
 
 import dev.xcolorful.cgcanimation.client.CgcAnimationClient;
+import net.neoforged.fml.loading.FMLPaths;
 
 public class CgcAnimationNeoforgeClient {
 
@@ -9,7 +10,7 @@ public class CgcAnimationNeoforgeClient {
     public static void init() {
         if (initialized) return;
 
-        CgcAnimationClient.init();
+        CgcAnimationClient.init(FMLPaths.GAMEDIR.get(), FMLPaths.CONFIGDIR.get());
         initialized = true;
     }
 }
