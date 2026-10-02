@@ -22,6 +22,16 @@ Notation:
 > package com.tacz.guns.compat;
 > ```
 
+|com.tacz.guns.compat|dev.xcolorful.cgcanimation.client.animation|
+|---|---|
+|playeranimator.animation|shooter.animator.legacy|
+|playeranimator.animation.`PlayerAnimatorLoader`|_Deprecated_|
+
 |com.tacz.guns.compat|dev.xcolorful.cgcanimation.core.api.resource|
 |---|---|
 |playeranimator.`AnimationName`|assets.animation.`BedrockAnimationTag`|
+
+|com.tacz.guns.compat|dev.xcolorful.cgcanimation.client.mixin|
+|---|---|
+|playeranimator.`PlayerAnimatorCompat`|playeranimator.`PlayerAnimatorCompatMixin`|
+

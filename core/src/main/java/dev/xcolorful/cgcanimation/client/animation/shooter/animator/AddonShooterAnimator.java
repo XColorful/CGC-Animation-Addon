@@ -1,6 +1,7 @@
 package dev.xcolorful.cgcanimation.client.animation.shooter.animator;
 
 import dev.xcolorful.cgcanimation.client.CgcAnimationClient;
+import dev.xcolorful.cgcanimation.client.animation.shooter.animator.legacy.AnimationManager;
 import dev.xcolorful.cgcanimation.client.config.CgcAnimationConfig;
 import dev.xcolorful.customgun.client.CustomGunClient;
 import dev.xcolorful.customgun.client.animation.shooter.animator.DefaultShooterAnimator;
@@ -28,11 +29,13 @@ public class AddonShooterAnimator implements IShooterAnimator {
     }
     public static void register() {
         CustomGunClient.getShooterAnimationManager().registerAnimator(INSTANCE);
+        AnimationManager.register();
         CgcAnimationConfig.enableAnimator = true;
         CgcAnimationClient.saveConfig();
     }
     public static void unregister() {
         CustomGunClient.getShooterAnimationManager().registerAnimator(DefaultShooterAnimator.INSTANCE);
+        AnimationManager.unregister();
         CgcAnimationConfig.enableAnimator = false;
         CgcAnimationClient.saveConfig();
     }
